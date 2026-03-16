@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+body{margin:0;overflow:hidden;background:#000;}
+canvas{width:100vw;height:100vh;display:block;}
+</style>
+</head>
+
+<body>
+<canvas id="c"></canvas>
+
+<script>
+
+const canvas=document.getElementById("c")
+const gl=canvas.getContext("webgl")
+
+canvas.width=window.innerWidth
+canvas.height=window.innerHeight
+
+gl.viewport(0,0,canvas.width,canvas.height)
+
+gl.clearColor(0.6,0.8,1.0,1)
+
+gl.enable(gl.DEPTH_TEST)
+gl.disable(gl.CULL_FACE)
+
+const vs = `
+attribute vec3 pos;
+
+uniform vec3 camPos;
+uniform float yaw;
+uniform float pitch;
+uniform float aspect;
+uniform float fov;
+uniform vec3 color;
+
+varying vec3 vColor;
+
+void main(){
+
+vec3 p = pos - camPos;
+
+/* Y rotation */
+
+float cy = cos(yaw);
+float sy = sin(yaw);
+
+p = vec3(
+cy*p.x - sy*p.z,
+p.y,
+sy*p.x + cy*p.z
+);
+
+/* X rotation */
+
+float cx = cos(pitch);
+float sx = sin(pitch);
+
+p = vec3(
+p.x,
+cx*p.y - sx*p.z,
+sx*p.y + cx*p.z
+);
+
+/* perspective */
+
+float f = 1.0 / tan(fov * 0.5);
+
+gl_Position = vec4(
+p.x * f / aspect,
+p.y * f,
+p.z,
+1.0
+);
+
+vColor = color;
+
+}
+`
+
+const fs=`
+precision mediump float;
+varying vec3 vColor;
+void main(){
+gl_FragColor=vec4(vColor,1.0);
+}
+`
+
+function compile(type,src){
+
+const s=gl.createShader(type)
+
+gl.shaderSource(s,src)
+gl.compileShader(s)
+
+return s
+}
+
+const program=gl.createProgram()
+
+gl.attachShader(program,compile(gl.VERTEX_SHADER,vs))
+gl.attachShader(program,compile(gl.FRAGMENT_SHADER,fs))
+
+gl.linkProgram(program)
+
+gl.useProgram(program)
+
+const posLoc=gl.getAttribLocation(program,"pos")
+
+const camPosLoc=gl.getUniformLocation(program,"camPos")
+const yawLoc=gl.getUniformLocation(program,"yaw")
+const pitchLoc=gl.getUniformLocation(program,"pitch")
+const aspectLoc=gl.getUniformLocation(program,"aspect")
+const colorLoc=gl.getUniformLocation(program,"color")
+
+const cubeVerts=new Float32Array([
+
+-0.5,-0.5,-0.5,0.5,-0.5,-0.5,0.5,0.5,-0.5,
+-0.5,-0.5,-0.5,0.5,0.5,-0.5,-0.5,0.5,-0.5,
+
+-0.5,-0.5,0.5,0.5,-0.5,0.5,0.5,0.5,0.5,
+-0.5,-0.5,0.5,0.5,0.5,0.5,-0.5,0.5,0.5,
+
+-0.5,-0.5,-0.5,-0.5,0.5,-0.5,-0.5,0.5,0.5,
+-0.5,-0.5,-0.5,-0.5,0.5,0.5,-0.5,-0.5,0.5,
+
+0.5,-0.5,-0.5,0.5,0.5,-0.5,0.5,0.5,0.5,
+0.5,-0.5,-0.5,0.5,0.5,0.5,0.5,-0.5,0.5,
+
+-0.5,0.5,-0.5,0.5,0.5,-0.5,0.5,0.5,0.5,
+-0.5,0.5,-0.5,0.5,0.5,0.5,-0.5,0.5,0.5,
+
+-0.5,-0.5,-0.5,0.5,-0.5,-0.5,0.5,-0.5,0.5,
+-0.5,-0.5,-0.5,0.5,-0.5,0.5,-0.5,-0.5,0.5
+
+])
+
+const vbo=gl.createBuffer()
+
+gl.bindBuffer(gl.ARRAY_BUFFER,vbo)
+gl.bufferData(gl.ARRAY_BUFFER,cubeVerts,gl.STATIC_DRAW)
+
+gl.enableVertexAttribArray(posLoc)
+gl.vertexAttribPointer(posLoc,3,gl.FLOAT,false,12,0)
+
+const world={}
+
+function setBlock(x,y,z,t){
+world[x+","+y+","+z]=t
+}
+
+const size=30
+
+for(let x=-size;x<size;x++)
+for(let z=-size;z<size;z++)
+setBlock(x,0,z,"grass")
+
+function tree(x,z){
+
+for(let y=1;y<5;y++)
+setBlock(x,y,z,"wood")
+
+for(let ix=-2;ix<=2;ix++)
+for(let iz=-2;iz<=2;iz++)
+for(let iy=4;iy<=6;iy++)
+setBlock(x+ix,iy,z+iz,"leaf")
+
+}
+
+for(let i=0;i<20;i++)
+tree(Math.random()*40-20|0,Math.random()*40-20|0)
+
+const player={x:0,y:2,z:5,vy:0}
+
+let yaw=0
+let pitch=0
+
+const keys={}
+
+document.addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true)
+document.addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false)
+
+canvas.onclick=()=>canvas.requestPointerLock()
+
+document.addEventListener("mousemove",e=>{
+
+if(document.pointerLockElement!==canvas) return
+
+yaw-=e.movementX*0.002
+pitch-=e.movementY*0.002
+
+pitch=Math.max(-1.5,Math.min(1.5,pitch))
+
+})
+
+function update(dt){
+
+const speed=5*dt
+
+const fx=Math.sin(yaw)
+const fz=Math.cos(yaw)
+
+const rx=Math.cos(yaw)
+const rz=-Math.sin(yaw)
+
+if(keys["w"]){player.x+=fx*speed;player.z+=fz*speed}
+if(keys["s"]){player.x-=fx*speed;player.z-=fz*speed}
+if(keys["a"]){player.x-=rx*speed;player.z-=rz*speed}
+if(keys["d"]){player.x+=rx*speed;player.z+=rz*speed}
+
+player.vy-=9.8*dt
+player.y+=player.vy*dt
+
+if(player.y<2){
+player.y=2
+player.vy=0
+if(keys[" "]) player.vy=5
+}
+
+}
+
+function drawCube(x,y,z,c){
+
+gl.uniform3f(camPosLoc,player.x-x,player.y-y,player.z-z)
+
+gl.uniform1f(yawLoc,yaw)
+gl.uniform1f(pitchLoc,pitch)
+gl.uniform1f(aspectLoc,canvas.width/canvas.height)
+
+gl.uniform3fv(colorLoc,c)
+
+gl.drawArrays(gl.TRIANGLES,0,36)
+
+}
+
+let last=0
+
+function loop(t){
+
+let dt=(t-last)/1000
+last=t
+
+update(dt)
+
+gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT)
+
+for(let k in world){
+
+let [x,y,z]=k.split(",").map(Number)
+
+let c=[0.4,0.8,0.4]
+
+if(world[k]=="wood") c=[0.55,0.27,0.07]
+if(world[k]=="leaf") c=[0.2,0.6,0.2]
+
+drawCube(x,y,z,c)
+
+}
+
+requestAnimationFrame(loop)
+
+}
+
+requestAnimationFrame(loop)
+
+</script>
+</body>
+</html>
