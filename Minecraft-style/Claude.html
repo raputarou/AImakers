@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft 3D - ブロックワールド</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .game-world {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F6FF 100%);
+        }
+
+        .hud {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border: 2px solid #00ff00;
+            font-size: 12px;
+            font-family: monospace;
+            color: #00ff00;
+            z-index: 10;
+            min-width: 200px;
+        }
+
+        .hud-item {
+            margin: 5px 0;
+        }
+
+        .fps-counter {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 15px;
+            border: 2px solid #ff00ff;
+            color: #ff00ff;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 10;
+        }
+
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border: 2px solid #00ff00;
+            font-size: 11px;
+            color: #00ff00;
+            font-family: monospace;
+            z-index: 10;
+        }
+
+        .crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 30px;
+            z-index: 15;
+            pointer-events: none;
+        }
+
+        .crosshair::before,
+        .crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.7);
+        }
+
+        .crosshair::before {
+            width: 2px;
+            height: 10px;
+            left: 50%;
+            top: -15px;
+            transform: translateX(-50%);
+        }
+
+        .crosshair::after {
+            width: 10px;
+            height: 2px;
+            left: -15px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+    </style>
+</head>
+<body>
+    <div class="game-world">
+        <canvas id="gameCanvas"></canvas>
+        <div class="crosshair"></div>
+        <div class="hud">
+            <div class="hud-item">Pos: <span id="pos">0, 0, 0</span></div>
+            <div class="hud-item">Rot: <span id="rot">0°, 0°</span></div>
+            <div class="hud-item">Blocks: <span id="blocks">0</span></div>
+        </div>
+        <div class="fps-counter" id="fps">FPS: 60</div>
+        <div class="controls">
+            <div>WASD: Move</div>
+            <div>Space: Jump</div>
+            <div>C: Descend</div>
+            <div>L-Click: Destroy</div>
+            <div>R-Click: Place</div>
+            <div>Esc: Unlock</div>
+        </div>
+    </div>
+
+    <script>
+        class Minecraft3D {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+
+                // Camera
+                this.cam = {
+                    x: 8,
+                    y: 1.6,
+                    z: 8,
+                    yaw: 0,
+                    pitch: 0
+                };
+
+                // Physics
+                this.velocity = 0;
+                this.onGround = true;
+
+                // Blocks storage
+                this.blocks = [];
+                this.generateTerrain();
+
+                // Input
+                this.keys = {};
+                this.mouseDown = false;
+                this.setupInput();
+
+                // Performance
+                this.frameCount = 0;
+                this.lastTime = Date.now();
+                this.fps = 60;
+
+                this.start();
+            }
+
+            generateTerrain() {
+                // Generate flat terrain with variation
+                const baseHeight = 8;
+                
+                for (let x = 0; x < 24; x++) {
+                    for (let z = 0; z < 24; z++) {
+                        // Small variation on flat base
+                        const noise = Math.sin(x * 0.5) * 0.5 + Math.cos(z * 0.5) * 0.5;
+                        const h = baseHeight + Math.floor(noise);
+                        
+                        for (let y = 0; y < h; y++) {
+                            let type;
+                            if (y === h - 1) {
+                                type = 'grass';
+                            } else if (y > h - 4) {
+                                type = 'dirt';
+                            } else {
+                                type = 'stone';
+                            }
+                            this.blocks.push({
+                                x: x,
+                                y: y,
+                                z: z,
+                                type: type
+                            });
+                        }
+                    }
+                }
+
+                // Add trees
+                for (let i = 0; i < 3; i++) {
+                    const tx = Math.floor(Math.random() * 20) + 2;
+                    const tz = Math.floor(Math.random() * 20) + 2;
+                    const th = baseHeight + Math.floor(Math.sin(tx * 0.5) * 0.5 + Math.cos(tz * 0.5) * 0.5);
+                    
+                    // Trunk
+                    for (let y = 0; y < 4; y++) {
+                        this.blocks.push({ x: tx, y: th + y, z: tz, type: 'wood' });
+                    }
+                    
+                    // Leaves
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dy = 0; dy < 2; dy++) {
+                            for (let dz = -1; dz <= 1; dz++) {
+                                if (Math.random() > 0.4) {
+                                    this.blocks.push({
+                                        x: tx + dx,
+                                        y: th + 2 + dy,
+                                        z: tz + dz,
+                                        type: 'leaves'
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            setupInput() {
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.key.toLowerCase()] = true;
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.key.toLowerCase()] = false;
+                });
+
+                // Mouse movement for look
+                document.addEventListener('mousemove', (e) => {
+                    if (this.mouseDown) {
+                        this.cam.yaw += e.movementX * 0.005;
+                        this.cam.pitch -= e.movementY * 0.005;
+                        this.cam.pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.cam.pitch));
+                    }
+                });
+
+                // Canvas click to toggle mouse lock
+                this.canvas.addEventListener('click', () => {
+                    this.mouseDown = !this.mouseDown;
+                    if (this.mouseDown) {
+                        this.canvas.requestPointerLock?.();
+                    } else {
+                        document.exitPointerLock?.();
+                    }
+                });
+
+                // Block interaction
+                this.canvas.addEventListener('mousedown', (e) => {
+                    if (!this.mouseDown) return;
+                    
+                    if (e.button === 0) {
+                        this.breakBlock();
+                    } else if (e.button === 2) {
+                        this.placeBlock();
+                    }
+                });
+
+                // Escape to unlock
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && this.mouseDown) {
+                        this.mouseDown = false;
+                        document.exitPointerLock?.();
+                    }
+                });
+
+                // Prevent context menu
+                this.canvas.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                });
+
+                window.addEventListener('resize', () => {
+                    this.canvas.width = window.innerWidth;
+                    this.canvas.height = window.innerHeight;
+                });
+            }
+
+            update() {
+                const speed = 0.3;
+
+                // Get forward and right vectors based on yaw (camera rotation around Y axis)
+                // Forward = direction camera is looking at (in XZ plane)
+                // Right = 90 degrees to the right of forward direction
+                const forwardX = Math.cos(this.cam.yaw);
+                const forwardZ = Math.sin(this.cam.yaw);
+                // Right vector is forward rotated 90 degrees clockwise
+                const rightX = Math.sin(this.cam.yaw);
+                const rightZ = -Math.cos(this.cam.yaw);
+
+                // WASD movement based on view direction
+                if (this.keys['w']) {
+                    // W: Move forward in camera direction
+                    this.cam.x += forwardX * speed;
+                    this.cam.z += forwardZ * speed;
+                }
+                if (this.keys['s']) {
+                    // S: Move backward (opposite of forward)
+                    this.cam.x -= forwardX * speed;
+                    this.cam.z -= forwardZ * speed;
+                }
+                if (this.keys['a']) {
+                    // A: Move left (opposite of right)
+                    this.cam.x -= rightX * speed;
+                    this.cam.z -= rightZ * speed;
+                }
+                if (this.keys['d']) {
+                    // D: Move right
+                    this.cam.x += rightX * speed;
+                    this.cam.z += rightZ * speed;
+                }
+
+                // Jump mechanics
+                if (this.keys[' '] && this.onGround) {
+                    this.velocity = 0.8;
+                    this.onGround = false;
+                    this.keys[' '] = false;
+                }
+
+                // Gravity
+                this.velocity -= 0.04;
+                this.cam.y += this.velocity;
+
+                // Ground collision
+                const groundLevel = this.getTerrainHeightAt(this.cam.x, this.cam.z) + 1.6;
+                if (this.cam.y <= groundLevel) {
+                    this.cam.y = groundLevel;
+                    this.velocity = 0;
+                    this.onGround = true;
+                }
+
+                if (this.keys['c']) {
+                    this.cam.y -= speed;
+                }
+            }
+
+            getTerrainHeightAt(x, z) {
+                const ix = Math.floor(x);
+                const iz = Math.floor(z);
+                
+                let maxY = 0;
+                for (const b of this.blocks) {
+                    if (b.x === ix && b.z === iz) {
+                        maxY = Math.max(maxY, b.y);
+                    }
+                }
+                return maxY;
+            }
+
+            project(x, y, z) {
+                let vx = x - this.cam.x;
+                let vy = y - this.cam.y;
+                let vz = z - this.cam.z;
+
+                // Rotate by yaw
+                const cosYaw = Math.cos(this.cam.yaw);
+                const sinYaw = Math.sin(this.cam.yaw);
+                const vx2 = vx * cosYaw - vz * sinYaw;
+                const vz2 = vx * sinYaw + vz * cosYaw;
+
+                // Rotate by pitch
+                const cosPitch = Math.cos(this.cam.pitch);
+                const sinPitch = Math.sin(this.cam.pitch);
+                const vy2 = vy * cosPitch - vz2 * sinPitch;
+                const vz3 = vy * sinPitch + vz2 * cosPitch;
+
+                if (vz3 <= 0.1) return null;
+
+                const scale = 500 / vz3;
+                return {
+                    x: this.canvas.width / 2 + vx2 * scale,
+                    y: this.canvas.height / 2 - vy2 * scale,
+                    z: vz3
+                };
+            }
+
+            drawBlock(block) {
+                const size = 1;
+                const x = block.x;
+                const y = block.y;
+                const z = block.z;
+
+                // All 8 vertices of the cube
+                const verts = [
+                    { x: x, y: y, z: z },              // 0: min corner
+                    { x: x + size, y: y, z: z },       // 1
+                    { x: x + size, y: y, z: z + size }, // 2
+                    { x: x, y: y, z: z + size },       // 3
+                    { x: x, y: y + size, z: z },       // 4
+                    { x: x + size, y: y + size, z: z }, // 5
+                    { x: x + size, y: y + size, z: z + size }, // 6
+                    { x: x, y: y + size, z: z + size }  // 7: max corner
+                ];
+
+                // Project vertices
+                const proj = verts.map(v => this.project(v.x, v.y, v.z));
+
+                // Check if block is visible at all
+                if (proj.every(p => p === null || p.z < 0.1)) return;
+
+                const colors = {
+                    grass: '#4a9d5f',
+                    dirt: '#a08276',
+                    stone: '#8b8b8b',
+                    wood: '#9b6b3a',
+                    leaves: '#3d8b40'
+                };
+
+                const color = colors[block.type] || '#8b8b8b';
+
+                // Define all 6 faces with 4 vertices each
+                // Order is important: vertices should be in counter-clockwise order when viewed from outside
+                const faces = [
+                    { indices: [0, 4, 5, 1], name: 'front' },   // z=0 plane
+                    { indices: [2, 6, 7, 3], name: 'back' },    // z=1 plane
+                    { indices: [0, 3, 7, 4], name: 'left' },    // x=0 plane
+                    { indices: [1, 5, 6, 2], name: 'right' },   // x=1 plane
+                    { indices: [0, 1, 2, 3], name: 'bottom' },  // y=0 plane
+                    { indices: [4, 7, 6, 5], name: 'top' }      // y=1 plane
+                ];
+
+                // Draw only visible faces (pass backface culling)
+                for (const face of faces) {
+                    const faceProj = face.indices.map(i => proj[i]);
+
+                    // Skip if any vertex is not projected
+                    if (faceProj.some(p => p === null)) continue;
+
+                    // Backface culling: check if face is front-facing
+                    const p0 = faceProj[0];
+                    const p1 = faceProj[1];
+                    const p2 = faceProj[2];
+
+                    // Cross product in screen space to determine if front-facing
+                    const cross = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
+                    
+                    // Only draw if front-facing
+                    if (cross <= 0) continue;
+
+                    // Draw the face
+                    this.ctx.fillStyle = color;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(faceProj[0].x, faceProj[0].y);
+                    for (let i = 1; i < faceProj.length; i++) {
+                        this.ctx.lineTo(faceProj[i].x, faceProj[i].y);
+                    }
+                    this.ctx.closePath();
+                    this.ctx.fill();
+                }
+            }
+
+            breakBlock() {
+                const rayDist = 5;
+                const rayStep = 0.1;
+                
+                const dirX = Math.cos(this.cam.yaw) * Math.cos(this.cam.pitch);
+                const dirY = Math.sin(this.cam.pitch);
+                const dirZ = Math.sin(this.cam.yaw) * Math.cos(this.cam.pitch);
+
+                for (let dist = rayStep; dist < rayDist; dist += rayStep) {
+                    const x = this.cam.x + dirX * dist;
+                    const y = this.cam.y + dirY * dist;
+                    const z = this.cam.z + dirZ * dist;
+
+                    const ix = Math.round(x);
+                    const iy = Math.round(y);
+                    const iz = Math.round(z);
+
+                    const idx = this.blocks.findIndex(b => b.x === ix && b.y === iy && b.z === iz);
+                    if (idx !== -1) {
+                        this.blocks.splice(idx, 1);
+                        break;
+                    }
+                }
+            }
+
+            placeBlock() {
+                const rayDist = 5;
+                const rayStep = 0.1;
+                
+                const dirX = Math.cos(this.cam.yaw) * Math.cos(this.cam.pitch);
+                const dirY = Math.sin(this.cam.pitch);
+                const dirZ = Math.sin(this.cam.yaw) * Math.cos(this.cam.pitch);
+
+                let lastPos = { x: Math.floor(this.cam.x), y: Math.floor(this.cam.y), z: Math.floor(this.cam.z) };
+
+                for (let dist = rayStep; dist < rayDist; dist += rayStep) {
+                    const x = this.cam.x + dirX * dist;
+                    const y = this.cam.y + dirY * dist;
+                    const z = this.cam.z + dirZ * dist;
+
+                    const ix = Math.round(x);
+                    const iy = Math.round(y);
+                    const iz = Math.round(z);
+
+                    const exists = this.blocks.some(b => b.x === ix && b.y === iy && b.z === iz);
+                    if (exists) {
+                        const alreadyExists = this.blocks.some(b => 
+                            b.x === lastPos.x && b.y === lastPos.y && b.z === lastPos.z
+                        );
+                        if (!alreadyExists) {
+                            this.blocks.push({
+                                x: lastPos.x,
+                                y: lastPos.y,
+                                z: lastPos.z,
+                                type: 'grass'
+                            });
+                        }
+                        break;
+                    }
+
+                    lastPos = { x: ix, y: iy, z: iz };
+                }
+            }
+
+            render() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Filter visible blocks
+                const renderDist = 50;
+                const visible = [];
+                
+                for (const b of this.blocks) {
+                    const dx = b.x - this.cam.x;
+                    const dy = b.y - this.cam.y;
+                    const dz = b.z - this.cam.z;
+                    
+                    if (Math.abs(dx) <= renderDist && Math.abs(dy) <= renderDist && Math.abs(dz) <= renderDist) {
+                        // Calculate distance from camera to block center
+                        const distSq = dx * dx + dy * dy + dz * dz;
+                        visible.push({ ...b, distSq });
+                    }
+                }
+
+                // Sort by distance (far to near for painter's algorithm)
+                visible.sort((a, b) => b.distSq - a.distSq);
+
+                // Draw blocks
+                for (const block of visible) {
+                    this.drawBlock(block);
+                }
+
+                // Update HUD
+                document.getElementById('pos').textContent = 
+                    `${Math.round(this.cam.x)}, ${Math.round(this.cam.y)}, ${Math.round(this.cam.z)}`;
+                document.getElementById('rot').textContent = 
+                    `${Math.round(this.cam.yaw * 180 / Math.PI)}°, ${Math.round(this.cam.pitch * 180 / Math.PI)}°`;
+                document.getElementById('blocks').textContent = visible.length;
+
+                // FPS counter
+                this.frameCount++;
+                const now = Date.now();
+                if (now - this.lastTime >= 1000) {
+                    this.fps = this.frameCount;
+                    document.getElementById('fps').textContent = `FPS: ${this.fps}`;
+                    this.frameCount = 0;
+                    this.lastTime = now;
+                }
+            }
+
+            start() {
+                const loop = () => {
+                    this.update();
+                    this.render();
+                    requestAnimationFrame(loop);
+                };
+                loop();
+            }
+        }
+
+        const game = new Minecraft3D();
+    </script>
+</body>
+</html>
